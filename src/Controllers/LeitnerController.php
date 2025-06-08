@@ -3,7 +3,7 @@
 namespace App\Controllers;
 
 use App\Models\Word;
-use App\Models\LeitnerCard;
+use App\Models\LeitnerCard; // This use statement allows using LeitnerCard::OUTCOME_CORRECT etc.
 
 class LeitnerController {
     private Word $wordModel;
@@ -82,7 +82,7 @@ class LeitnerController {
 
     public function showDashboard(): void {
         $stats = $this->leitnerCardModel->getCardStats($this->currentUserId);
-        $username = $_SESSION['username'];
+        $username = $_SESSION['username'] ?? 'کاربر';
         $isReviewAvailable = ($stats['due'] > 0);
         require_once __DIR__ . '/../Views/leitner/dashboard.php';
     }
@@ -119,9 +119,10 @@ class LeitnerController {
                 $wordId = $this->wordModel->create($this->currentUserId, $germanWord, $translation, $audioFilename);
 
                 if ($wordId) {
+                    // New cards start in Box 0, model's create() handles this.
                     if ($this->leitnerCardModel->create($wordId, $this->currentUserId)) {
                         $pdo->commit();
-                        header("Location: /leitner/add?message=" . urlencode("کلمه با موفقیت اضافه شد."));
+                        header("Location: /leitner/add?message=" . urlencode("کلمه با موفقیت اضافه شد و در جعبه آشنایی قرار گرفت."));
                         exit;
                     } else {
                         $pdo->rollBack();
@@ -156,7 +157,7 @@ class LeitnerController {
         $translation = trim($_POST['translation'] ?? '');
         $audioFile = $_FILES['audio_file'] ?? null;
 
-        if (!isset($wordId)) {
+        if (!isset($wordId) || $wordId === false) {
             header("Location: /leitner/vocabulary?error=" . urlencode("شناسه کلمه نامعتبر است."));
             exit;
         }
@@ -205,7 +206,7 @@ class LeitnerController {
             exit;
         }
         $wordId = filter_input(INPUT_POST, 'word_id', FILTER_VALIDATE_INT);
-        if (!$wordId) {
+        if (!isset($wordId) || $wordId === false) {
             header("Location: /leitner/vocabulary?error=" . urlencode("شناسه کلمه برای حذف نامعتبر است."));
             exit;
         }
@@ -244,21 +245,40 @@ class LeitnerController {
 
     public function processReviewOutcome(): void {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header("Location: /leitner/review?error=" . urlencode("متد درخواست نامعتبر است."));
+            header("Location: /leitner/review?error=" . urlencode("متد نامعتبر."));
             exit;
         }
+
         $cardId = filter_input(INPUT_POST, 'card_id', FILTER_VALIDATE_INT);
         $outcome = $_POST['outcome'] ?? '';
-        if (!$cardId || !in_array($outcome, ['correct', 'incorrect'])) {
+
+        if (!isset($cardId) || $cardId === false ||
+            !in_array($outcome, [
+                LeitnerCard::OUTCOME_CORRECT,
+                LeitnerCard::OUTCOME_INCORRECT,
+                LeitnerCard::OUTCOME_PARTIAL
+            ])) {
             header("Location: /leitner/review?error=" . urlencode("اطلاعات مرور ارسال شده نامعتبر است."));
             exit;
         }
-        $wasCorrect = ($outcome === 'correct');
-        if ($this->leitnerCardModel->processReview($cardId, $this->currentUserId, $wasCorrect)) {
-            header("Location: /leitner/review?message=" . urlencode("کارت بروز شد: " . ($wasCorrect ? "به جعبه بعدی منتقل شد!" : "به جعبه ۱ منتقل شد!")));
+
+        if ($this->leitnerCardModel->processReview($cardId, $this->currentUserId, $outcome)) {
+            $message = "کارت بروز شد.";
+            switch($outcome) {
+                case LeitnerCard::OUTCOME_CORRECT:
+                    $message = "کارت بروز شد: پاسخ صحیح ثبت شد.";
+                    break;
+                case LeitnerCard::OUTCOME_PARTIAL:
+                    $message = "کارت بروز شد: پاسخ نسبی ثبت شد.";
+                    break;
+                case LeitnerCard::OUTCOME_INCORRECT:
+                    $message = "کارت بروز شد: پاسخ نادرست ثبت شد.";
+                    break;
+            }
+            header("Location: /leitner/review?message=" . urlencode($message));
             exit;
         } else {
-            header("Location: /leitner/review?error=" . urlencode("خطا در پردازش مرور. کارت یافت نشد یا خطایی هنگام بروزرسانی رخ داد."));
+            header("Location: /leitner/review?error=" . urlencode("خطا در پردازش مرور. لطفا دوباره تلاش کنید."));
             exit;
         }
     }
@@ -272,7 +292,7 @@ class LeitnerController {
 
     public function showEditWordForm(): void {
         $wordId = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-        if (!$wordId) {
+        if (!isset($wordId) || $wordId === false) {
             header("Location: /leitner/vocabulary?error=" . urlencode("شناسه کلمه نامعتبر است."));
             exit;
         }

@@ -8,70 +8,64 @@ use PDOException;
 class Database {
     private static ?PDO $instance = null;
     private string $dbPath;
+    private ?PDO $pdo = null;
 
     public function __construct() {
         if (getenv('APP_ENV') === 'testing') {
             $dbName = getenv('DB_DATABASE_TEST') ?: ':memory:';
-            if ($dbName === ':memory:') {
-                $this->dbPath = ':memory:';
-            } else {
-                $this->dbPath = __DIR__ . '/../../' . $dbName;
-            }
-            // DO NOT call self::resetInstance() here. It should be controlled by test setUp/tearDown.
+            $this->dbPath = ($dbName === ':memory:') ? ':memory:' : __DIR__ . '/../../' . $dbName;
+            // Do not call resetInstance here; it's for explicit test control
         } else {
             $this->dbPath = __DIR__ . '/../../database/app.db';
         }
     }
 
-    public static function resetInstance(): void {
-        // This allows tests to explicitly reset the DB state for :memory:
-        if (self::$instance !== null) {
-            // Potentially close the connection if it's a file-based DB to release locks,
-            // but for :memory:, just nullifying is enough as the DB disappears when connection is lost.
-            // self::$instance = null; // For PDO, simply nullifying the static var is enough to ensure a new connection is made.
-        }
-        self::$instance = null;
-    }
-
     public function getConnection(): PDO {
-        if (self::$instance === null) {
+        if (self::$instance === null) { // Check static instance first
             try {
-                if ($this->dbPath !== ':memory:') {
-                    $dbDir = dirname($this->dbPath);
-                    if (!is_dir($dbDir)) {
-                        mkdir($dbDir, 0755, true);
-                    }
-                }
+                // echo "Attempting DB Connection to: " . $this->dbPath . "\n"; // Debug
+                $this->pdo = new PDO('sqlite:' . $this->dbPath);
+                $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+                $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+                $this->pdo->exec('PRAGMA foreign_keys = ON;');
 
-                self::$instance = new PDO('sqlite:' . $this->dbPath);
-                self::$instance->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-                self::$instance->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-                self::$instance->exec('PRAGMA foreign_keys = ON;');
-
+                self::$instance = $this->pdo; // Set static instance
                 $this->initDatabase();
             } catch (PDOException $e) {
                 die("Database connection failed: " . $e->getMessage());
             }
+        } else {
+            // If static instance exists, ensure this object's pdo property is also set
+            $this->pdo = self::$instance;
         }
-        return self::$instance;
+        return self::$instance; // Return static instance
     }
 
     private function initDatabase(): void {
-        $pdo = self::$instance;
-        if (!$pdo) {
-            throw new \LogicException("PDO instance is null in initDatabase. Connection might have failed.");
+        if ($this->pdo === null) {
+            // This case should ideally not be hit if getConnection logic is sound
+            // and always sets $this->pdo when it sets self::$instance.
+            // For robustness, if self::$instance exists (e.g. set by another Database object), use it.
+            if (self::$instance !== null) {
+                 $this->pdo = self::$instance;
+            } else {
+                // This is a critical failure state.
+                // Attempting to re-establish connection here might be too late or hide issues.
+                throw new \LogicException("PDO instance is null in initDatabase and static instance is also null. Connection failed or was reset unexpectedly.");
+            }
         }
-        // Schema definition remains the same...
-        $pdo->exec("
+
+        $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username VARCHAR(255) NOT NULL UNIQUE,
                 email VARCHAR(255) NOT NULL UNIQUE,
                 password_hash VARCHAR(255) NOT NULL,
+                is_admin BOOLEAN DEFAULT 0 NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ");
-        $pdo->exec("
+        $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS words (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -82,7 +76,7 @@ class Database {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ");
-        $pdo->exec("
+        $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS leitner_cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 word_id INTEGER NOT NULL UNIQUE,
@@ -95,7 +89,11 @@ class Database {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_leitner_cards_user_box ON leitner_cards (user_id, box_number)");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_leitner_cards_user_next_review ON leitner_cards (user_id, next_review_at)");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_leitner_cards_user_box ON leitner_cards (user_id, box_number)");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_leitner_cards_user_next_review ON leitner_cards (user_id, next_review_at)");
+    }
+
+    public static function resetInstance(): void {
+        self::$instance = null;
     }
 }

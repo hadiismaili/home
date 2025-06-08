@@ -28,37 +28,29 @@ class AuthController {
             $confirm_password = $_POST['confirm_password'] ?? '';
 
             if (empty($username) || empty($email) || empty($password)) {
-                header("Location: /register?error=" . urlencode("همه‌ی فیلدها الزامی هستند."));
-                exit;
+                header("Location: /register?error=" . urlencode("همه‌ی فیلدها الزامی هستند.")); exit;
             }
             if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                header("Location: /register?error=" . urlencode("فرمت ایمیل نامعتبر است."));
-                exit;
+                header("Location: /register?error=" . urlencode("فرمت ایمیل نامعتبر است.")); exit;
             }
             if ($password !== $confirm_password) {
-                header("Location: /register?error=" . urlencode("رمزهای عبور مطابقت ندارند."));
-                exit;
+                header("Location: /register?error=" . urlencode("رمزهای عبور مطابقت ندارند.")); exit;
             }
             if (strlen($password) < 6) {
-                header("Location: /register?error=" . urlencode("رمز عبور باید حداقل ۶ کاراکتر باشد."));
-                exit;
+                header("Location: /register?error=" . urlencode("رمز عبور باید حداقل ۶ کاراکتر باشد.")); exit;
             }
-
             if ($this->userModel->findByUsername($username)) {
-                header("Location: /register?error=" . urlencode("این نام کاربری قبلا گرفته شده است."));
-                exit;
+                header("Location: /register?error=" . urlencode("این نام کاربری قبلا گرفته شده است.")); exit;
             }
             if ($this->userModel->findByEmail($email)) {
-                header("Location: /register?error=" . urlencode("این ایمیل قبلا ثبت شده است."));
-                exit;
+                header("Location: /register?error=" . urlencode("این ایمیل قبلا ثبت شده است.")); exit;
             }
 
-            if ($this->userModel->create($username, $email, $password)) {
-                header("Location: /login?message=" . urlencode("ثبت نام موفقیت آمیز بود. لطفا وارد شوید."));
-                exit;
+            // Regular users are not created as admin by default
+            if ($this->userModel->create($username, $email, $password, false)) { // Explicitly false for isAdmin
+                header("Location: /login?message=" . urlencode("ثبت نام موفقیت آمیز بود. لطفا وارد شوید.")); exit;
             } else {
-                header("Location: /register?error=" . urlencode("خطا در ثبت نام. لطفا دوباره تلاش کنید."));
-                exit;
+                header("Location: /register?error=" . urlencode("خطا در ثبت نام. لطفا دوباره تلاش کنید.")); exit;
             }
         } else {
             $this->showRegistrationForm();
@@ -77,20 +69,22 @@ class AuthController {
             $password = $_POST['password'] ?? '';
 
             if (empty($username) || empty($password)) {
-                header("Location: /login?error=" . urlencode("نام کاربری و رمز عبور الزامی هستند."));
-                exit;
+                header("Location: /login?error=" . urlencode("نام کاربری و رمز عبور الزامی هستند.")); exit;
             }
-
             $user = $this->userModel->findByUsername($username);
 
             if ($user && password_verify($password, $user['password_hash'])) {
                 $_SESSION['user_id'] = $user['id'];
-                $_SESSION['username'] = $user['username'];
-                header("Location: /home");
+                $_SESSION['username'] = $user['username']; // Keep username for general use
+
+                if ((bool)$user['is_admin']) {
+                    header("Location: /admin/dashboard");
+                } else {
+                    header("Location: /leitner/dashboard");
+                }
                 exit;
             } else {
-                header("Location: /login?error=" . urlencode("نام کاربری یا رمز عبور نامعتبر است."));
-                exit;
+                header("Location: /login?error=" . urlencode("نام کاربری یا رمز عبور نامعتبر است.")); exit;
             }
         } else {
             $this->showLoginForm();
@@ -98,18 +92,26 @@ class AuthController {
     }
 
     public function logout(): void {
-        session_unset();
-        session_destroy();
+        session_unset(); // Unset all session variables
+        session_destroy(); // Destroy the session
         header("Location: /login?message=" . urlencode("شما با موفقیت خارج شدید."));
         exit;
     }
 
+    // This showHome is called by the /home route.
+    // Login will redirect to either /admin/dashboard or /leitner/dashboard directly.
+    // This method can serve as a fallback or if /home is accessed directly by a logged-in user.
     public function showHome(): void {
         if (!isset($_SESSION['user_id'])) {
-            header("Location: /login");
-            exit;
+            header("Location: /login"); exit;
         }
-        header("Location: /leitner/dashboard");
+
+        $currentUser = $this->userModel->findById($_SESSION['user_id']);
+        if ($currentUser && (bool)$currentUser['is_admin']) {
+             header("Location: /admin/dashboard");
+        } else {
+             header("Location: /leitner/dashboard");
+        }
         exit;
     }
 }

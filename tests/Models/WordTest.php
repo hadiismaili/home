@@ -21,25 +21,26 @@ class WordTest extends TestCase
         $db = new Database();
         $this->pdo = $db->getConnection();
 
-        $this->pdo->exec("DELETE FROM words");
+        // Clear tables in a specific order due to FK constraints if not using TRUNCATE or similar
         $this->pdo->exec("DELETE FROM leitner_cards");
+        $this->pdo->exec("DELETE FROM words");
         $this->pdo->exec("DELETE FROM users");
 
         $this->userModel = new User();
         $this->wordModel = new Word();
 
-        $this->userModel->create('testuser_word', 'wordtest@example.com', 'password');
+        $createResult = $this->userModel->create('testuser_word', 'wordtest@example.com', 'password');
+        $this->assertTrue($createResult, "setUp: Failed to create initial test user 'testuser_word'.");
         $user = $this->userModel->findByUsername('testuser_word');
         if (!$user) {
-            $this->fail("Failed to create test user in setUp.");
+            $this->fail("setUp: Failed to find initial test user 'testuser_word' after creation.");
         }
         $this->testUserId = $user['id'];
 
-        // Minimal session handling for safety, though model tests shouldn't rely on it.
         if (session_status() == PHP_SESSION_NONE && !headers_sent()) {
-            @session_start(); // Use @ to suppress warnings if headers already sent in other contexts
+            @session_start();
         }
-        $_SESSION = []; // Clear session data at start of test
+        $_SESSION = [];
     }
 
     public function testCreateWord()
@@ -78,22 +79,21 @@ class WordTest extends TestCase
     {
         $word1German = 'Apfel';
         $this->wordModel->create($this->testUserId, $word1German, 'Apple');
-        // Ensure timestamp difference or rely on ID tie-breaker
-        usleep(10000); // Sleep for 10ms to ensure different timestamp if system clock resolution is low
+        usleep(10000);
         $word2German = 'Banane';
         $this->wordModel->create($this->testUserId, $word2German, 'Banana');
 
-        $this->userModel->create('otheruser_wordtest', 'other_wordtest@example.com', 'pass');
+        $createResult = $this->userModel->create('otheruser_wordtest', 'other_wordtest@example.com', 'pass');
+        $this->assertTrue($createResult, "Failed to create 'otheruser_wordtest'.");
         $otherUser = $this->userModel->findByUsername('otheruser_wordtest');
         if (!$otherUser) {
-            $this->fail("Failed to create 'otheruser_wordtest' in testGetAllByUser.");
+            $this->fail("Failed to create/find 'otheruser_wordtest' in testGetAllByUser.");
         }
         $this->wordModel->create($otherUser['id'], 'Kirsche', 'Cherry');
 
         $words = $this->wordModel->getAllByUser($this->testUserId);
         $this->assertCount(2, $words, "Should retrieve 2 words for the test user.");
 
-        // With ORDER BY created_at DESC, id DESC: 'Banane' (created later) should be first.
         $this->assertEquals($word2German, $words[0]['german_word']);
         $this->assertEquals($word1German, $words[1]['german_word']);
     }
@@ -116,7 +116,6 @@ class WordTest extends TestCase
         $this->assertEquals($newAudio, $updatedWord['audio_filename']);
 
         $otherUserId = $this->testUserId + 100;
-        // This should return false as no rows are affected for otherUserId
         $this->assertFalse($this->wordModel->update($wordId, $otherUserId, "No", "No"), "Update should fail for a word not owned by the user.");
     }
 
@@ -136,6 +135,38 @@ class WordTest extends TestCase
         $otherUserId = $this->testUserId + 100;
         $this->assertFalse($this->wordModel->delete($wordId2, $otherUserId), "Delete should fail for a word not owned by the user.");
         $this->assertNotNull($this->wordModel->findById($wordId2, $this->testUserId), "Word should still exist if delete by wrong user was attempted.");
+    }
+
+    public function testCountWordsByUserId()
+    {
+        $this->assertEquals(0, $this->wordModel->countWordsByUserId($this->testUserId));
+        $this->wordModel->create($this->testUserId, 'W1', 'T1');
+        usleep(10000);
+        $this->wordModel->create($this->testUserId, 'W2', 'T2');
+        $this->assertEquals(2, $this->wordModel->countWordsByUserId($this->testUserId));
+
+        $createOtherUserResult = $this->userModel->create('otheruserwc', 'owc@example.com', 'p');
+        $this->assertTrue($createOtherUserResult, "Failed to create otheruserwc for count test.");
+        $otherUser = $this->userModel->findByUsername('otheruserwc');
+        $this->assertNotNull($otherUser, "Failed to find otheruserwc.");
+        $this->assertEquals(0, $this->wordModel->countWordsByUserId($otherUser['id']));
+    }
+
+    public function testCountAllWords()
+    {
+        // Since setUp clears words table, initialTotalCount for this specific DB instance context is 0.
+        $initialTotalCount = $this->wordModel->countAll();
+        $this->assertEquals(0, $initialTotalCount, "Initial word count should be 0 after setUp.");
+
+        $this->wordModel->create($this->testUserId, 'W1Total', 'T1Total');
+
+        $createOtherUserResult = $this->userModel->create('otheruserwc2', 'owc2@example.com', 'p');
+        $this->assertTrue($createOtherUserResult, "Failed to create otheruserwc2 for count test.");
+        $otherUser = $this->userModel->findByUsername('otheruserwc2');
+        $this->assertNotNull($otherUser, "Failed to find otheruserwc2.");
+        $this->wordModel->create($otherUser['id'], 'W3Total', 'T3Total');
+
+        $this->assertEquals(2, $this->wordModel->countAll()); // Now it's 2 because only these two were added.
     }
 
     protected function tearDown(): void

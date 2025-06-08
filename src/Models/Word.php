@@ -12,7 +12,7 @@ class Word {
         $this->db = (new Database())->getConnection();
     }
 
-    public function getDbConnection(): PDO { // Added in previous step, ensure it stays
+    public function getDbConnection(): PDO {
         return $this->db;
     }
 
@@ -26,7 +26,7 @@ class Word {
 
         if ($stmt->execute()) {
             $lastId = $this->db->lastInsertId();
-            return $lastId ? (int)$lastId : false; // lastInsertId can return string or false
+            return $lastId ? (int)$lastId : false;
         }
         return false;
     }
@@ -50,7 +50,7 @@ class Word {
     }
 
     public function getAllByUser(int $userId): array {
-        $stmt = $this->db->prepare("SELECT * FROM words WHERE user_id = :user_id ORDER BY created_at DESC, id DESC"); // Added id DESC for tie-breaking
+        $stmt = $this->db->prepare("SELECT * FROM words WHERE user_id = :user_id ORDER BY created_at DESC, id DESC");
         $stmt->bindParam(':user_id', $userId, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll();
@@ -75,5 +75,17 @@ class Word {
         $stmt->bindParam(':user_id', $userId, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->rowCount() > 0;
+    }
+
+    public function countAll(): int {
+        $stmt = $this->db->query("SELECT COUNT(*) FROM words");
+        return (int)$stmt->fetchColumn();
+    }
+
+    public function countWordsByUserId(int $userId): int {
+        $stmt = $this->db->prepare("SELECT COUNT(*) FROM words WHERE user_id = :user_id");
+        $stmt->bindParam(':user_id', $userId, PDO::PARAM_INT);
+        $stmt->execute();
+        return (int)$stmt->fetchColumn();
     }
 }

@@ -28,22 +28,19 @@ class User {
         return $user ?: null;
     }
 
-    public function create(string $username, string $email, string $password): bool {
-        // Check if user already exists by username or email
-        // Although UNIQUE constraints handle this at DB level, this provides a cleaner check first.
+    public function create(string $username, string $email, string $password, bool $isAdmin = false): bool {
         if ($this->findByUsername($username) || $this->findByEmail($email)) {
-            // error_log("User model: Attempt to create user that already exists (username: $username, email: $email)");
             return false;
         }
         $password_hash = password_hash($password, PASSWORD_DEFAULT);
-        $sql = "INSERT INTO users (username, email, password_hash) VALUES (:username, :email, :password_hash)";
-        $stmt = $this->db->prepare($sql);
+        $stmt = $this->db->prepare("INSERT INTO users (username, email, password_hash, is_admin) VALUES (:username, :email, :password_hash, :is_admin)");
         $stmt->bindParam(':username', $username);
         $stmt->bindParam(':email', $email);
         $stmt->bindParam(':password_hash', $password_hash);
+        $isAdminInt = (int)$isAdmin;
+        $stmt->bindParam(':is_admin', $isAdminInt, PDO::PARAM_INT);
 
         if (!$stmt->execute()) {
-            // error_log("User model: stmt->execute() failed for user: $username");
             return false;
         }
         return $stmt->rowCount() > 0;
@@ -55,5 +52,52 @@ class User {
         $stmt->execute();
         $user = $stmt->fetch();
         return $user ?: null;
+    }
+
+    public function setAdminStatus(int $userId, bool $isAdmin): bool {
+        $sql = "UPDATE users SET is_admin = :is_admin WHERE id = :id";
+        $stmt = $this->db->prepare($sql);
+        $isAdminInt = (int)$isAdmin;
+        $stmt->bindParam(':is_admin', $isAdminInt, PDO::PARAM_INT);
+        $stmt->bindParam(':id', $userId, PDO::PARAM_INT);
+        if ($stmt->execute()) {
+            return $stmt->rowCount() > 0;
+        }
+        return false;
+    }
+
+    public function isAdmin(int $userId): bool {
+        $user = $this->findById($userId);
+        return $user ? (bool)$user['is_admin'] : false;
+    }
+
+    public function getDbConnection(): PDO {
+        return $this->db;
+    }
+
+    public function countAll(): int {
+        $stmt = $this->db->query("SELECT COUNT(*) FROM users");
+        return (int)$stmt->fetchColumn();
+    }
+
+    public function getAllUsers(string $orderBy = 'created_at', string $orderDir = 'DESC'): array {
+        $allowedOrderBy = ['id', 'username', 'email', 'is_admin', 'created_at'];
+        if (!in_array(strtolower($orderBy), $allowedOrderBy, true)) {
+            $orderBy = 'created_at';
+        }
+        $orderDir = strtoupper($orderDir) === 'ASC' ? 'ASC' : 'DESC';
+
+        $sql = "SELECT id, username, email, is_admin, created_at FROM users ORDER BY " . $orderBy . " " . $orderDir;
+        $stmt = $this->db->query($sql);
+        return $stmt->fetchAll();
+    }
+
+    public function deleteById(int $userId): bool {
+        $stmt = $this->db->prepare("DELETE FROM users WHERE id = :id");
+        $stmt->bindParam(':id', $userId, PDO::PARAM_INT);
+        if ($stmt->execute()) {
+            return $stmt->rowCount() > 0;
+        }
+        return false;
     }
 }

@@ -6,10 +6,10 @@ require_once __DIR__ . '/../partials/header.php';
 <h2>مرور کلمات</h2>
 
 <?php if (!empty($error)): ?>
-    <p style="color:red; border: 1px solid red; padding: 10px; margin-bottom:15px;"><?php echo htmlspecialchars(urldecode($error)); ?></p>
+    <p style="color:red; border: 1px solid red; padding: 10px; margin-bottom:15px; border-radius:4px;"><?php echo htmlspecialchars(urldecode($error)); ?></p>
 <?php endif; ?>
 <?php if (!empty($message)): ?>
-    <p style="color:green; border: 1px solid green; padding: 10px; margin-bottom:15px;"><?php echo htmlspecialchars(urldecode($message)); ?></p>
+    <p style="color:green; border: 1px solid green; padding: 10px; margin-bottom:15px; border-radius:4px;"><?php echo htmlspecialchars(urldecode($message)); ?></p>
 <?php endif; ?>
 
 <?php if (isset($currentCard) && !empty($currentCard)): ?>
@@ -17,13 +17,13 @@ require_once __DIR__ . '/../partials/header.php';
         <h3>کلمه آلمانی:</h3>
         <p class="german-word"><?php echo htmlspecialchars($currentCard['german_word']); ?></p>
 
-        <button id="showTranslationBtn">نمایش ترجمه</button>
+        <button id="showTranslationBtn" class="button">نمایش ترجمه</button>
 
-        <div id="translationContainer" style="display:none;">
+        <div id="translationContainer" style="display:none; margin-top: 15px;">
             <h4>ترجمه:</h4>
             <p class="translation"><?php echo htmlspecialchars($currentCard['translation']); ?></p>
             <?php if (!empty($currentCard['audio_filename'])): ?>
-                <audio controls src="/audio/<?php echo htmlspecialchars($currentCard['audio_filename']); ?>">
+                <audio controls src="/audio/<?php echo htmlspecialchars($currentCard['audio_filename']); ?>" style="margin-top:10px;">
                     مرورگر شما از پخش صوت پشتیبانی نمی‌کند.
                 </audio>
             <?php endif; ?>
@@ -31,9 +31,10 @@ require_once __DIR__ . '/../partials/header.php';
 
         <form action="/leitner/review/process" method="POST" id="reviewOutcomeForm" style="display:none; margin-top: 20px;">
             <input type="hidden" name="card_id" value="<?php echo $currentCard['id']; ?>">
-            <p>آیا پاسخ شما درست بود؟</p>
-            <button type="submit" name="outcome" value="correct" class="button">درست بود</button>
-            <button type="submit" name="outcome" value="incorrect" class="button review-button">اشتباه بود</button>
+            <p>نتیجه مرور شما چطور بود؟</p>
+            <button type="submit" name="outcome" value="<?php echo App\Models\LeitnerCard::OUTCOME_CORRECT; ?>" class="button" style="background-color: #5cb85c; margin-left: 5px; margin-right: 5px;">می دانم</button>
+            <button type="submit" name="outcome" value="<?php echo App\Models\LeitnerCard::OUTCOME_PARTIAL; ?>" class="button" style="background-color: #f0ad4e; margin-left: 5px; margin-right: 5px;">نسبتا میفهمم</button>
+            <button type="submit" name="outcome" value="<?php echo App\Models\LeitnerCard::OUTCOME_INCORRECT; ?>" class="button" style="background-color: #d9534f; margin-left: 5px; margin-right: 5px;">نمی دانم</button>
         </form>
     </div>
 
