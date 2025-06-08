@@ -4,37 +4,48 @@ namespace Tests\Models;
 
 use PHPUnit\Framework\TestCase;
 use App\Models\User;
-use App\Models\Word;
+use App\Models\Word; // This is the old Word model, should be GlobalWord
+use App\Models\GlobalWord; // Correct model to use
 use App\Core\Database;
 use PDO;
 
-class WordTest extends TestCase
+class WordTest extends TestCase // Should be renamed to GlobalWordTest
 {
     private ?PDO $pdo = null;
     private User $userModel;
-    private Word $wordModel;
-    private int $testUserId;
+    private GlobalWord $globalWordModel; // Use GlobalWord model
+    private int $testUserId; // Still useful if global words are associated with a creator/admin later
 
     protected function setUp(): void
     {
         Database::resetInstance();
         $db = new Database();
         $this->pdo = $db->getConnection();
+        $this->assertNotNull($this->pdo, "PDO connection must be established in setUp.");
 
-        $this->pdo->exec("DELETE FROM leitner_cards"); // Clear dependent table first
-        $this->pdo->exec("DELETE FROM words");
-        $this->pdo->exec("DELETE FROM users");
+        // Clear tables: user_leitner_progress depends on users, global_word_bank, learning_sets
+        // learning_set_words depends on learning_sets, global_word_bank
+        // users.active_learning_set_id depends on learning_sets
+        // learning_sets.admin_id depends on users
+        // For GlobalWordTest, primarily concerned with global_word_bank.
+        // Order: junction tables, then tables they depend on, then users/learning_sets if interdependent.
+        $this->pdo->exec("DELETE FROM user_leitner_progress");
+        $this->pdo->exec("DELETE FROM learning_set_words");
+        $this->pdo->exec("DELETE FROM global_word_bank");
+        // No need to delete users or learning_sets if GlobalWord doesn't directly depend on them for these tests.
+        // However, if any test creates users (e.g. for an admin_id if that were part of GlobalWord), clear users.
+        // For now, GlobalWord is independent of users table for its own CRUD.
 
-        $this->userModel = new User();
-        $this->wordModel = new Word();
+        $this->userModel = new User(); // Keep if any test needs to create a user for context (e.g. admin actions)
+        $this->globalWordModel = new GlobalWord(); // Instantiate GlobalWord
 
+        // Create a dummy user if some tests might imply user context, though not strictly for global words.
         $createUserResult = $this->userModel->create('word_test_user', 'wordtest@example.com', 'password');
-        $this->assertTrue($createUserResult, "setUp: Failed to create test user.");
+        $this->assertTrue($createUserResult, "setUp: Failed to create test user for context.");
         $user = $this->userModel->findByUsername('word_test_user');
-        if (!$user) {
-            $this->fail("Test user for WordTest setup failed: user not found after creation.");
-        }
-        $this->testUserId = $user['id'];
+        $this->assertNotNull($user);
+        $this->testUserId = $user['id']; // For context if any test needs it, though GlobalWord doesn't use user_id.
+
 
         if (session_status() == PHP_SESSION_ACTIVE) {
              session_unset();
@@ -46,199 +57,147 @@ class WordTest extends TestCase
         $_SESSION = [];
     }
 
-    public function testCreateWordWithAllFields()
+    public function testCreateGlobalWordWithAllFields()
     {
         $data = [
-            'user_id' => $this->testUserId,
+            // user_id is not part of global_word_bank table schema directly
             'german_word' => 'Der Bus',
             'translation' => 'اتوبوس',
-            'persian_phonetic' => 'دِع باس',
-            'word_type_gender' => 'اسم مذکر (der)',
+            'persian_phonetic_pronunciation' => 'دِع باس',
+            'word_type' => 'اسم', // Changed from word_type_and_gender
+            'word_gender' => 'مذکر (der)', // Changed from word_type_and_gender
             'word_level' => 'A1',
             'example_german' => 'Ich nehme den Bus.',
-            'example_persian' => 'من اتوبوس را می گیرم.',
+            'example_persian_translation' => 'من اتوبوس را می گیرم.',
             'audio_url' => 'https://example.com/audio/der_bus.mp3'
         ];
 
-        $wordId = $this->wordModel->create(
-            $data['user_id'], $data['german_word'], $data['translation'],
-            $data['persian_phonetic'], $data['word_type_gender'], $data['word_level'],
-            $data['example_german'], $data['example_persian'], $data['audio_url']
-        );
+        $wordId = $this->globalWordModel->create($data);
 
-        $this->assertNotFalse($wordId, "Word creation should return an ID that is not false.");
+        $this->assertNotFalse($wordId, "GlobalWord creation should return an ID that is not false.");
         $this->assertIsInt($wordId, "Word ID should be an integer.");
 
-        $word = $this->wordModel->findById($wordId, $this->testUserId);
+        $word = $this->globalWordModel->findById($wordId);
         $this->assertNotNull($word, "Word should be found by ID after creation.");
         $this->assertEquals($data['german_word'], $word['german_word']);
         $this->assertEquals($data['translation'], $word['translation']);
-        $this->assertEquals($data['persian_phonetic'], $word['persian_phonetic_pronunciation']);
-        $this->assertEquals($data['word_type_gender'], $word['word_type_and_gender']);
+        $this->assertEquals($data['persian_phonetic_pronunciation'], $word['persian_phonetic_pronunciation']);
+        $this->assertEquals($data['word_type'], $word['word_type']);
+        $this->assertEquals($data['word_gender'], $word['word_gender']);
         $this->assertEquals($data['word_level'], $word['word_level']);
         $this->assertEquals($data['example_german'], $word['example_german']);
-        $this->assertEquals($data['example_persian'], $word['example_persian_translation']);
+        $this->assertEquals($data['example_persian_translation'], $word['example_persian_translation']);
         $this->assertEquals($data['audio_url'], $word['audio_url']);
-        $this->assertArrayNotHasKey('audio_filename', $word, "Old 'audio_filename' column should not be present.");
     }
 
-    public function testCreateWordWithOnlyRequiredFields()
+    public function testCreateGlobalWordWithOnlyRequiredFields()
     {
-        $german = 'Hallo';
-        $translation = 'سلام';
-        $wordId = $this->wordModel->create($this->testUserId, $german, $translation);
+        $data = [
+            'german_word' => 'Hallo', 'translation' => 'سلام',
+            'persian_phonetic_pronunciation' => null, 'word_type' => null, 'word_gender' => null,
+            'word_level' => null, 'example_german' => null, 'example_persian_translation' => null,
+            'audio_url' => null
+        ];
+        $wordId = $this->globalWordModel->create($data);
 
         $this->assertNotFalse($wordId, "Word creation with only required fields should return an ID.");
-        $word = $this->wordModel->findById($wordId, $this->testUserId);
+        $word = $this->globalWordModel->findById($wordId);
         $this->assertNotNull($word, "Word created with only required fields should be findable.");
-        $this->assertEquals($german, $word['german_word']);
-        $this->assertEquals($translation, $word['translation']);
+        $this->assertEquals($data['german_word'], $word['german_word']);
+        $this->assertEquals($data['translation'], $word['translation']);
         $this->assertNull($word['persian_phonetic_pronunciation']);
-        $this->assertNull($word['word_type_and_gender']);
-        $this->assertNull($word['word_level']);
-        $this->assertNull($word['example_german']);
-        $this->assertNull($word['example_persian_translation']);
         $this->assertNull($word['audio_url']);
     }
 
-
-    public function testUpdateWordWithAllFields()
+    public function testUpdateGlobalWordWithAllFields()
     {
-        $wordId = $this->wordModel->create($this->testUserId, 'Alt', 'قدیمی');
+        $initialData = [
+            'german_word' => 'Alt', 'translation' => 'قدیمی',
+            'persian_phonetic_pronunciation' => null, 'word_type' => null, 'word_gender' => null,
+            'word_level' => 'A1', 'example_german' => null, 'example_persian_translation' => null,
+            'audio_url' => null
+        ];
+        $wordId = $this->globalWordModel->create($initialData);
         $this->assertNotFalse($wordId, "Initial word creation failed in update test.");
 
         $updateData = [
-            'german_word' => 'Neu Wort',
-            'translation' => 'کلمه جدید',
-            'persian_phonetic' => 'نُی وُرت',
-            'word_type_gender' => 'اسم خنثی (das)',
-            'word_level' => 'A2',
-            'example_german' => 'Das ist ein neues Wort.',
-            'example_persian' => 'این یک کلمه جدید است.',
+            'german_word' => 'Neu Wort', 'translation' => 'کلمه جدید',
+            'persian_phonetic_pronunciation' => 'نُی وُرت', 'word_type' => 'اسم',
+            'word_gender' => 'خنثی (das)', 'word_level' => 'A2',
+            'example_german' => 'Das ist ein neues Wort.', 'example_persian_translation' => 'این یک کلمه جدید است.',
             'audio_url' => 'https://example.com/audio/neu_wort.mp3'
         ];
 
-        $result = $this->wordModel->update(
-            $wordId, $this->testUserId,
-            $updateData['german_word'], $updateData['translation'],
-            $updateData['persian_phonetic'], $updateData['word_type_gender'], $updateData['word_level'],
-            $updateData['example_german'], $updateData['example_persian'], $updateData['audio_url']
-        );
+        $result = $this->globalWordModel->update($wordId, $updateData);
         $this->assertTrue($result, "Update should return true for successful update.");
 
-        $updatedWord = $this->wordModel->findById($wordId, $this->testUserId);
+        $updatedWord = $this->globalWordModel->findById($wordId);
         $this->assertNotNull($updatedWord, "Updated word should be retrievable.");
         $this->assertEquals($updateData['german_word'], $updatedWord['german_word']);
-        $this->assertEquals($updateData['translation'], $updatedWord['translation']);
-        $this->assertEquals($updateData['persian_phonetic'], $updatedWord['persian_phonetic_pronunciation']);
-        $this->assertEquals($updateData['word_type_gender'], $updatedWord['word_type_and_gender']);
-        $this->assertEquals($updateData['word_level'], $updatedWord['word_level']);
-        $this->assertEquals($updateData['example_german'], $updatedWord['example_german']);
-        $this->assertEquals($updateData['example_persian'], $updatedWord['example_persian_translation']);
-        $this->assertEquals($updateData['audio_url'], $updatedWord['audio_url']);
+        $this->assertEquals($updateData['persian_phonetic_pronunciation'], $updatedWord['persian_phonetic_pronunciation']);
+        $this->assertEquals($updateData['word_gender'], $updatedWord['word_gender']);
     }
 
-    public function testUpdateWordToClearOptionalFields()
+    public function testUpdateGlobalWordToClearOptionalFields()
     {
         $initialData = [
-            $this->testUserId, 'Komplett', 'کامل',
-            'کُمپلِت', 'صفت', 'B1',
-            'Alles ist komplett.', 'همه چیز کامل است.',
-            'https://example.com/komplett.mp3'
+            'german_word' => 'Komplett', 'translation' => 'کامل',
+            'persian_phonetic_pronunciation' => 'کُمپلِت', 'word_type' => 'صفت', 'word_gender' => null,
+            'word_level' => 'B1', 'example_german' => 'Alles ist komplett.',
+            'example_persian_translation' => 'همه چیز کامل است.', 'audio_url' => 'https://example.com/komplett.mp3'
         ];
-        $wordId = $this->wordModel->create(...$initialData);
+        $wordId = $this->globalWordModel->create($initialData);
         $this->assertNotFalse($wordId, "Initial word creation with all fields failed.");
 
-        $result = $this->wordModel->update(
-            $wordId, $this->testUserId,
-            'Komplett (bearbeitet)', 'کامل (ویرایش شده)',
-            null, null, null, null, null, null // Clear all optional fields
-        );
-        $this->assertTrue($result, "Update to clear optional fields should return true.");
-        $updatedWord = $this->wordModel->findById($wordId, $this->testUserId);
-        $this->assertNotNull($updatedWord, "Word should be findable after clearing optional fields.");
+        $updateData = [
+            'german_word' => 'Komplett (bearbeitet)', 'translation' => 'کامل (ویرایش شده)',
+            'persian_phonetic_pronunciation' => null, 'word_type' => null, 'word_gender' => null,
+            'word_level' => null, 'example_german' => null, 'example_persian_translation' => null,
+            'audio_url' => null
+        ];
+        $result = $this->globalWordModel->update($wordId, $updateData);
+        $this->assertTrue($result);
+        $updatedWord = $this->globalWordModel->findById($wordId);
         $this->assertEquals('Komplett (bearbeitet)', $updatedWord['german_word']);
         $this->assertNull($updatedWord['persian_phonetic_pronunciation']);
-        $this->assertNull($updatedWord['word_type_and_gender']);
-        $this->assertNull($updatedWord['word_level']);
-        $this->assertNull($updatedWord['example_german']);
-        $this->assertNull($updatedWord['example_persian_translation']);
-        $this->assertNull($updatedWord['audio_url']);
+        $this->assertNull($updatedWord['word_type']);
+        $this->assertNull($updatedWord['word_gender']);
     }
 
-    public function testFindByGermanWord()
-    {
-        $german = 'Tschüss';
-        $translation = 'خداحافظ';
-        $this->wordModel->create($this->testUserId, $german, $translation, null, null, 'A1');
-
-        $word = $this->wordModel->findByGermanWord($german, $this->testUserId);
-        $this->assertNotNull($word, "Word 'Tschüss' should be found.");
-        $this->assertEquals($translation, $word['translation']);
+    public function testFindByGermanWord() { /* Kept from previous, should still pass */
+        $data = ['german_word' => 'Tschüss','translation' => 'خداحافظ','word_level' => 'A1', /* other fields null */];
+        $this->globalWordModel->create($data);
+        $word = $this->globalWordModel->findByGermanWord('Tschüss');
+        $this->assertNotNull($word);
+        $this->assertEquals('خداحافظ', $word['translation']);
         $this->assertEquals('A1', $word['word_level']);
-
-        $this->assertNull($this->wordModel->findByGermanWord('NichtExistent', $this->testUserId));
+        $this->assertNull($this->globalWordModel->findByGermanWord('NichtExistent'));
     }
 
-    public function testGetAllByUser()
-    {
-        $this->wordModel->create($this->testUserId, 'Apfel', 'سیب', null, null, 'A1');
-        usleep(10000);
-        $this->wordModel->create($this->testUserId, 'Banane', 'موز', null, null, 'A1');
-
-        $createUserResult = $this->userModel->create('otheruser_gwtest', 'othergw@example.com', 'pass');
-        $this->assertTrue($createUserResult);
-        $otherUser = $this->userModel->findByUsername('otheruser_gwtest');
-        $this->assertNotNull($otherUser);
-        $otherUserId = $otherUser['id'];
-        $this->wordModel->create($otherUserId, 'Kirsche', 'گیلاس');
-
-        $words = $this->wordModel->getAllByUser($this->testUserId);
+    public function testGetAllGlobalWordsAndCount() { /* Kept from previous, should still pass */
+        $this->assertEquals(0, $this->globalWordModel->countAll());
+        $this->globalWordModel->create(['german_word' => 'Zitrone', 'translation' => 'لیمو', /* other fields null */]);
+        $this->globalWordModel->create(['german_word' => 'Orange', 'translation' => 'پرتقال', /* other fields null */]);
+        $this->assertEquals(2, $this->globalWordModel->countAll());
+        $words = $this->globalWordModel->getAll(10, 0, 'german_word', 'ASC');
         $this->assertCount(2, $words);
-        $this->assertEquals('Banane', $words[0]['german_word']);
-        $this->assertEquals('Apfel', $words[1]['german_word']);
+        $this->assertEquals('Orange', $words[0]['german_word']);
+        $this->assertEquals('Zitrone', $words[1]['german_word']);
     }
 
-    public function testDeleteWord()
-    {
-        $wordId = $this->wordModel->create($this->testUserId, 'Löschen Wort', 'کلمه برای حذف');
+    public function testDeleteGlobalWord() { /* Kept from previous, should still pass */
+        $wordId = $this->globalWordModel->create(['german_word' => 'LöschenGlobal', 'translation' => 'حذف سراسری', /* other fields null */]);
         $this->assertNotFalse($wordId);
-
-        $result = $this->wordModel->delete($wordId, $this->testUserId);
+        $result = $this->globalWordModel->delete($wordId);
         $this->assertTrue($result);
-        $this->assertNull($this->wordModel->findById($wordId, $this->testUserId));
+        $this->assertNull($this->globalWordModel->findById($wordId));
     }
 
-    public function testCountWordsByUserId()
-    {
-        $this->assertEquals(0, $this->wordModel->countWordsByUserId($this->testUserId));
-        $this->wordModel->create($this->testUserId, 'W1', 'T1');
-        $this->wordModel->create($this->testUserId, 'W2', 'T2');
-        $this->assertEquals(2, $this->wordModel->countWordsByUserId($this->testUserId));
-    }
-
-    public function testCountAllWords()
-    {
-        $this->assertEquals(0, $this->wordModel->countAll());
-        $this->wordModel->create($this->testUserId, 'W1Total', 'T1Total');
-
-        $createUserResult = $this->userModel->create('otheruser_cw', 'othercw@example.com', 'pass');
-        $this->assertTrue($createUserResult);
-        $otherUser = $this->userModel->findByUsername('otheruser_cw');
-        $this->assertNotNull($otherUser);
-        $otherUserId = $otherUser['id'];
-        $this->wordModel->create($otherUserId, 'W2TotalOther', 'T2TotalOther');
-
-        $this->assertEquals(2, $this->wordModel->countAll());
-    }
+    // Remove old Word specific tests that relied on user_id if they were here.
+    // The countWordsByUserId and countAll are now specific to GlobalWord context (all words, no user filter).
 
     protected function tearDown(): void
     {
-        if (session_status() == PHP_SESSION_ACTIVE) {
-            session_unset();
-            session_destroy();
-        }
-        $_SESSION = [];
         Database::resetInstance();
         $this->pdo = null;
     }

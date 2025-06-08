@@ -69,14 +69,21 @@ switch ($route) {
         $leitnerController = new \App\Controllers\LeitnerController();
         $leitnerController->showDashboard();
         break;
-    case '/leitner/add':
-        $leitnerController = new \App\Controllers\LeitnerController();
+    case '/leitner/activate-set': // POST only
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $leitnerController->addWord();
+            $leitnerController = new \App\Controllers\LeitnerController();
+            $leitnerController->activateLearningSet();
         } else {
-            $leitnerController->showAddWordForm();
+            $_SESSION['flash_error'] = "درخواست نامعتبر.";
+            header("Location: /leitner/dashboard");
+            exit;
         }
         break;
+    // Old Leitner word management routes are removed as per controller changes.
+    // case '/leitner/add': ...
+    // case '/leitner/vocabulary': ...
+    // case '/leitner/edit': ...
+    // case '/leitner/delete': ...
     case '/leitner/review':
         $leitnerController = new \App\Controllers\LeitnerController();
         $leitnerController->showReview();
@@ -86,28 +93,8 @@ switch ($route) {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $leitnerController->processReviewOutcome();
         } else {
-            header("Location: /leitner/review?error=Invalid+access+method");
-            exit;
-        }
-        break;
-    case '/leitner/vocabulary':
-        $leitnerController = new \App\Controllers\LeitnerController();
-        $leitnerController->showVocabularyList();
-        break;
-    case '/leitner/edit':
-        $leitnerController = new \App\Controllers\LeitnerController();
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $leitnerController->updateWord();
-        } else {
-            $leitnerController->showEditWordForm();
-        }
-        break;
-    case '/leitner/delete':
-        $leitnerController = new \App\Controllers\LeitnerController();
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $leitnerController->deleteWord();
-        } else {
-            header("Location: /leitner/vocabulary?error=Invalid+access+method+for+delete");
+            $_SESSION['flash_error'] = "متد دسترسی نامعتبر برای پردازش مرور."; // Changed from $_SESSION['error']
+            header("Location: /leitner/review");
             exit;
         }
         break;
@@ -126,7 +113,8 @@ switch ($route) {
             $adminUserController = new \App\Controllers\Admin\UserController();
             $adminUserController->toggleAdminStatus();
         } else {
-            header("Location: /admin/users?error=Invalid+request"); exit;
+            $_SESSION['flash_error'] = "درخواست نامعتبر.";
+            header("Location: /admin/users"); exit;
         }
         break;
     case '/admin/users/delete':
@@ -134,7 +122,68 @@ switch ($route) {
             $adminUserController = new \App\Controllers\Admin\UserController();
             $adminUserController->deleteUser();
         } else {
-            header("Location: /admin/users?error=Invalid+request"); exit;
+            $_SESSION['flash_error'] = "درخواست نامعتبر.";
+            header("Location: /admin/users"); exit;
+        }
+        break;
+    case '/admin/global-words':
+        $globalWordController = new \App\Controllers\Admin\GlobalWordController();
+        $globalWordController->listWords();
+        break;
+    case '/admin/global-words/add':
+        $globalWordController = new \App\Controllers\Admin\GlobalWordController();
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $globalWordController->addWord();
+        } else {
+            $globalWordController->showAddForm();
+        }
+        break;
+    case '/admin/global-words/edit':
+        $globalWordController = new \App\Controllers\Admin\GlobalWordController();
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $globalWordController->updateWord();
+        } else {
+            $globalWordController->showEditForm();
+        }
+        break;
+    case '/admin/global-words/delete':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $globalWordController = new \App\Controllers\Admin\GlobalWordController();
+            $globalWordController->deleteWord();
+        } else {
+            $_SESSION['flash_error'] = "متد نامعتبر برای حذف کلمه از بانک جهانی.";
+            header("Location: /admin/global-words");
+            exit;
+        }
+        break;
+    case '/admin/learning-sets':
+        $learningSetController = new \App\Controllers\Admin\LearningSetController();
+        $learningSetController->listSets();
+        break;
+    case '/admin/learning-sets/add':
+        $learningSetController = new \App\Controllers\Admin\LearningSetController();
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $learningSetController->addSet();
+        } else {
+            $learningSetController->showAddForm();
+        }
+        break;
+    case '/admin/learning-sets/edit':
+        $learningSetController = new \App\Controllers\Admin\LearningSetController();
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $learningSetController->updateSet();
+        } else {
+            $learningSetController->showEditForm();
+        }
+        break;
+    case '/admin/learning-sets/delete':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $learningSetController = new \App\Controllers\Admin\LearningSetController();
+            $learningSetController->deleteSet();
+        } else {
+            $_SESSION['flash_error'] = "متد نامعتبر برای حذف مجموعه آموزشی.";
+            header("Location: /admin/learning-sets");
+            exit;
         }
         break;
     default:

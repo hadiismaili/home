@@ -1,14 +1,16 @@
 <?php
-
 namespace App\Controllers;
 
-use App\Models\Word;
-use App\Models\LeitnerCard;
+use App\Models\LearningSet;
+use App\Models\UserProgressService;
+use App\Models\User;
 
 class LeitnerController {
-    private Word $wordModel;
-    private LeitnerCard $leitnerCardModel;
+    private UserProgressService $userProgressService;
+    private LearningSet $learningSetModel;
+    private User $userModel;
     private ?int $currentUserId;
+    private ?string $currentUsername;
 
     public function __construct() {
         if (session_status() == PHP_SESSION_NONE) {
@@ -16,233 +18,154 @@ class LeitnerController {
         }
 
         if (!isset($_SESSION['user_id'])) {
-            header("Location: /login?error=" . urlencode("لطفا برای دسترسی به جعبه لایتنر وارد شوید."));
+            header("Location: /login?error=" . urlencode("لطفا برای دسترسی وارد شوید."));
             exit;
         }
-        $this->currentUserId = $_SESSION['user_id'];
-        $this->wordModel = new Word();
-        $this->leitnerCardModel = new LeitnerCard();
+        $this->currentUserId = (int)$_SESSION['user_id'];
+        $this->currentUsername = $_SESSION['username'] ?? 'کاربر';
+
+        $this->userProgressService = new UserProgressService();
+        $this->learningSetModel = new LearningSet();
+        $this->userModel = new User();
     }
 
-    // Audio file system helper methods (handleAudioUpload, deleteAudioFile) are removed.
-
     public function showDashboard(): void {
-        $stats = $this->leitnerCardModel->getCardStats($this->currentUserId);
-        $username = $_SESSION['username'] ?? 'کاربر';
-        $isReviewAvailable = ($stats['due'] > 0);
+        $activeLearningSetId = $this->userModel->getActiveLearningSetId($this->currentUserId);
+        $activeLearningSet = null;
+        $stats = null;
+        $isReviewAvailable = false;
+
+        // Preserve warning from previous operations if any, then clear it from session
+        $flash_warning = $_SESSION['flash_warning'] ?? null;
+        unset($_SESSION['flash_warning']);
+
+        if ($activeLearningSetId) {
+            $activeLearningSet = $this->learningSetModel->findById($activeLearningSetId);
+            if ($activeLearningSet) {
+                 $stats = $this->userProgressService->getCardStatsForSet($this->currentUserId, $activeLearningSetId);
+                 $isReviewAvailable = ($stats['due'] > 0);
+            } else {
+                $this->userModel->setActiveLearningSet($this->currentUserId, null);
+                $activeLearningSetId = null;
+                // Override any existing warning with this more specific one if set was invalid
+                $flash_warning = "مجموعه آموزشی فعال قبلی شما دیگر موجود نیست. لطفا یک مجموعه جدید انتخاب کنید.";
+            }
+        }
+
+        $availableSets = $this->learningSetModel->getAll('name', 'ASC');
+
+        $message = $_SESSION['flash_message'] ?? null;
+        $error = $_SESSION['flash_error'] ?? null;
+        unset($_SESSION['flash_message'], $_SESSION['flash_error']); // Clear after fetching
+
+        // Make $flash_warning available to the view
+        $warning = $flash_warning;
+
         require_once __DIR__ . '/../Views/leitner/dashboard.php';
     }
 
-    public function showAddWordForm(): void {
-        $error = $_GET['error'] ?? null;
-        $message = $_GET['message'] ?? null;
-        require_once __DIR__ . '/../Views/leitner/add_word.php';
-    }
-
-    public function addWord(): void {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $germanWord = trim($_POST['german_word'] ?? '');
-            $translation = trim($_POST['translation'] ?? '');
-            $persianPhonetic = trim($_POST['persian_phonetic_pronunciation'] ?? '') ?: null;
-            $wordTypeGender = trim($_POST['word_type_and_gender'] ?? '') ?: null;
-            $wordLevel = trim($_POST['word_level'] ?? '') ?: null;
-            $exampleGerman = trim($_POST['example_german'] ?? '') ?: null;
-            $examplePersian = trim($_POST['example_persian_translation'] ?? '') ?: null;
-            $audioUrl = trim($_POST['audio_url'] ?? '') ?: null;
-
-
-            if (empty($germanWord) || empty($translation)) {
-                header("Location: /leitner/add?error=" . urlencode("کلمه آلمانی و ترجمه آن الزامی است."));
-                exit;
-            }
-            if ($this->wordModel->findByGermanWord($germanWord, $this->currentUserId)) {
-                header("Location: /leitner/add?error=" . urlencode("این کلمه از قبل در واژگان شما موجود است."));
-                exit;
-            }
-
-            $pdo = $this->wordModel->getDbConnection(); // Assuming this method exists in Word model
-            try {
-                $pdo->beginTransaction();
-
-                $wordId = $this->wordModel->create(
-                    $this->currentUserId, $germanWord, $translation,
-                    $persianPhonetic, $wordTypeGender, $wordLevel,
-                    $exampleGerman, $examplePersian, $audioUrl
-                );
-
-                if ($wordId) {
-                    if ($this->leitnerCardModel->create($wordId, $this->currentUserId)) {
-                        $pdo->commit();
-                        header("Location: /leitner/add?message=" . urlencode("کلمه با موفقیت اضافه شد و در جعبه آشنایی قرار گرفت."));
-                        exit;
-                    } else {
-                        $pdo->rollBack();
-                        header("Location: /leitner/add?error=" . urlencode("خطا در ایجاد کارت لایتنر."));
-                        exit;
-                    }
-                } else {
-                    $pdo->rollBack();
-                    header("Location: /leitner/add?error=" . urlencode("خطا در افزودن کلمه."));
-                    exit;
-                }
-            } catch (\Exception $e) {
-                if ($pdo->inTransaction()) $pdo->rollBack();
-                error_log("Error in LeitnerController::addWord: " . $e->getMessage());
-                header("Location: /leitner/add?error=" . urlencode("یک خطای سیستمی هنگام افزودن کلمه رخ داد. لطفا دوباره تلاش کنید."));
-                exit;
-            }
-        }
-        $this->showAddWordForm();
-    }
-
-    public function updateWord(): void {
+    public function activateLearningSet(): void {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header("Location: /leitner/vocabulary?error=" . urlencode("متد نامعتبر."));
+            $_SESSION['flash_error'] = "متد نامعتبر.";
+            header("Location: /leitner/dashboard");
             exit;
         }
+        $newSetIdInput = $_POST['learning_set_id'] ?? ''; // Get as string first
 
-        $wordId = filter_input(INPUT_POST, 'word_id', FILTER_VALIDATE_INT);
-        $germanWord = trim($_POST['german_word'] ?? '');
-        $translation = trim($_POST['translation'] ?? '');
-        $persianPhonetic = trim($_POST['persian_phonetic_pronunciation'] ?? '') ?: null;
-        $wordTypeGender = trim($_POST['word_type_and_gender'] ?? '') ?: null;
-        $wordLevel = trim($_POST['word_level'] ?? '') ?: null;
-        $exampleGerman = trim($_POST['example_german'] ?? '') ?: null;
-        $examplePersian = trim($_POST['example_persian_translation'] ?? '') ?: null;
-        $audioUrl = trim($_POST['audio_url'] ?? '') ?: null;
-
-        if (!$wordId || $wordId === false || empty($germanWord) || empty($translation)) {
-            // If wordId is available, redirect back to edit page, otherwise to vocabulary list
-            $redirectUrl = $wordId ? "/leitner/edit?id={$wordId}&error=" : "/leitner/vocabulary?error=";
-            header("Location: " . $redirectUrl . urlencode("کلمه آلمانی و ترجمه الزامی هستند و شناسه کلمه باید معتبر باشد."));
-            exit;
+        // Handle case where user deselects (chooses empty option which results in empty string)
+        if ($newSetIdInput === '') {
+            $this->userModel->setActiveLearningSet($this->currentUserId, null);
+            $_SESSION['flash_message'] = "هیچ مجموعه آموزشی فعالی انتخاب نشده است.";
+            header("Location: /leitner/dashboard"); exit;
         }
 
-        $existingWord = $this->wordModel->findById($wordId, $this->currentUserId);
-        if (!$existingWord) {
-            header("Location: /leitner/vocabulary?error=" . urlencode("کلمه یافت نشد یا دسترسی مجاز نیست."));
-            exit;
+        $newSetId = filter_var($newSetIdInput, FILTER_VALIDATE_INT);
+        if ($newSetId === false || $newSetId <= 0) { // Ensure positive integer
+            $_SESSION['flash_error'] = "مجموعه آموزشی انتخاب شده نامعتبر است.";
+            header("Location: /leitner/dashboard"); exit;
         }
 
-        $conflictWord = $this->wordModel->findByGermanWord($germanWord, $this->currentUserId);
-        if ($conflictWord && $conflictWord['id'] !== $wordId) {
-            header("Location: /leitner/edit?id=$wordId&error=" . urlencode("کلمه دیگری با این عبارت آلمانی موجود است."));
-            exit;
+        $setExists = $this->learningSetModel->findById($newSetId);
+        if (!$setExists) {
+            $_SESSION['flash_error'] = "مجموعه آموزشی انتخاب شده وجود ندارد.";
+            header("Location: /leitner/dashboard"); exit;
         }
 
+        $currentActiveSetId = $this->userModel->getActiveLearningSetId($this->currentUserId);
+        $pdo = $this->userModel->getDbConnection();
         try {
-            if ($this->wordModel->update(
-                $wordId, $this->currentUserId, $germanWord, $translation,
-                $persianPhonetic, $wordTypeGender, $wordLevel,
-                $exampleGerman, $examplePersian, $audioUrl
-            )) {
-                header("Location: /leitner/vocabulary?message=" . urlencode("کلمه با موفقیت بروزرسانی شد."));
-                exit;
-            } else {
-                // This might mean no actual data changed, or an update error not throwing PDOException
-                header("Location: /leitner/edit?id=$wordId&error=" . urlencode("خطا در بروزرسانی کلمه یا تغییری ایجاد نشد."));
-                exit;
+            $pdo->beginTransaction();
+            $updateResult = $this->userModel->setActiveLearningSet($this->currentUserId, $newSetId);
+
+            if (!$updateResult && $currentActiveSetId !== $newSetId) {
+                // If rowCount is 0 but it wasn't already the active set, it's an issue.
+                throw new \Exception("خطا در بروزرسانی مجموعه فعال کاربر.");
             }
+            $pdo->commit();
+            $_SESSION['flash_message'] = "مجموعه آموزشی '" . htmlspecialchars($setExists['name']) . "' با موفقیت فعال شد.";
         } catch (\Exception $e) {
-            error_log("Error in LeitnerController::updateWord: " . $e->getMessage());
-            header("Location: /leitner/edit?id=$wordId&error=" . urlencode("یک خطای سیستمی هنگام بروزرسانی کلمه رخ داد. لطفا دوباره تلاش کنید."));
-            exit;
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $_SESSION['flash_error'] = "خطا در فعال سازی مجموعه: " . $e->getMessage();
         }
-    }
-
-    public function deleteWord(): void {
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header("Location: /leitner/vocabulary?error=" . urlencode("متد نامعتبر برای حذف."));
-            exit;
-        }
-        $wordId = filter_input(INPUT_POST, 'word_id', FILTER_VALIDATE_INT);
-        if (!$wordId || $wordId === false) {
-            header("Location: /leitner/vocabulary?error=" . urlencode("شناسه کلمه نامعتبر برای حذف."));
-            exit;
-        }
-
-        $word = $this->wordModel->findById($wordId, $this->currentUserId);
-        if (!$word) {
-            header("Location: /leitner/vocabulary?error=" . urlencode("کلمه برای حذف یافت نشد یا دسترسی شما مجاز نیست."));
-            exit;
-        }
-
-        // Since audio_url is just a URL, no server-side file deletion is handled here anymore.
-        // If self-hosted audio URLs were used and files were on this server,
-        // further logic might be needed if those files should be deleted.
-        // For external URLs, this is sufficient.
-        if ($this->wordModel->delete($wordId, $this->currentUserId)) {
-            header("Location: /leitner/vocabulary?message=" . urlencode("کلمه با موفقیت حذف شد."));
-            exit;
-        } else {
-            header("Location: /leitner/vocabulary?error=" . urlencode("خطا در حذف کلمه."));
-            exit;
-        }
+        header("Location: /leitner/dashboard");
+        exit;
     }
 
     public function showReview(): void {
-        $dueCards = $this->leitnerCardModel->getDueCards($this->currentUserId, 1);
+        $activeLearningSetId = $this->userModel->getActiveLearningSetId($this->currentUserId);
+        if (!$activeLearningSetId) {
+            $_SESSION['flash_warning'] = "ابتدا یک مجموعه آموزشی را برای مرور انتخاب کنید.";
+            header("Location: /leitner/dashboard");
+            exit;
+        }
+        $dueCards = $this->userProgressService->getDueCardsForSet($this->currentUserId, $activeLearningSetId, 1);
+
         if (empty($dueCards)) {
-            header("Location: /leitner/dashboard?message=" . urlencode("در حال حاضر کارتی برای مرور آماده نیست!"));
+            $_SESSION['flash_message'] = "در حال حاضر کارتی برای مرور در این مجموعه آماده نیست! می‌توانید مجموعه دیگری را انتخاب کنید یا بعدا مراجعه کنید.";
+            header("Location: /leitner/dashboard");
             exit;
         }
         $currentCard = $dueCards[0];
-        $error = $_GET['error'] ?? null;
-        $message = $_GET['message'] ?? null;
+
+        $message = $_SESSION['flash_message'] ?? null;
+        $error = $_SESSION['flash_error'] ?? null;
+        unset($_SESSION['flash_message'], $_SESSION['flash_error']);
+
         require_once __DIR__ . '/../Views/leitner/review.php';
     }
 
     public function processReviewOutcome(): void {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header("Location: /leitner/review?error=" . urlencode("متد نامعتبر."));
+            $_SESSION['flash_error'] = "متد درخواست برای پردازش مرور نامعتبر است.";
+            header("Location: /leitner/dashboard");
             exit;
         }
-        $cardId = filter_input(INPUT_POST, 'card_id', FILTER_VALIDATE_INT);
+        $progressId = filter_input(INPUT_POST, 'card_id', FILTER_VALIDATE_INT);
         $outcome = $_POST['outcome'] ?? '';
 
-        if (!$cardId || $cardId === false ||
+        if (!$progressId || $progressId === false ||
             !in_array($outcome, [
-                LeitnerCard::OUTCOME_CORRECT,
-                LeitnerCard::OUTCOME_INCORRECT,
-                LeitnerCard::OUTCOME_PARTIAL
+                UserProgressService::OUTCOME_CORRECT,
+                UserProgressService::OUTCOME_INCORRECT,
+                UserProgressService::OUTCOME_PARTIAL
             ])) {
-            header("Location: /leitner/review?error=" . urlencode("اطلاعات مرور ارسال شده نامعتبر است."));
+            $_SESSION['flash_error'] = "اطلاعات مرور ارسال شده نامعتبر است.";
+            header("Location: /leitner/review");
             exit;
         }
 
-        if ($this->leitnerCardModel->processReview($cardId, $this->currentUserId, $outcome)) {
+        if ($this->userProgressService->processReview($progressId, $this->currentUserId, $outcome)) {
             $message = "کارت بروز شد.";
             switch($outcome) {
-                case LeitnerCard::OUTCOME_CORRECT: $message = "کارت بروز شد: پاسخ صحیح ثبت شد."; break;
-                case LeitnerCard::OUTCOME_PARTIAL: $message = "کارت بروز شد: پاسخ نسبی ثبت شد."; break;
-                case LeitnerCard::OUTCOME_INCORRECT: $message = "کارت بروز شد: پاسخ نادرست ثبت شد."; break;
+                case UserProgressService::OUTCOME_CORRECT: $message = "کارت بروز شد: پاسخ صحیح ثبت شد."; break;
+                case UserProgressService::OUTCOME_PARTIAL: $message = "کارت بروز شد: پاسخ نسبی ثبت شد."; break;
+                case UserProgressService::OUTCOME_INCORRECT: $message = "کارت بروز شد: پاسخ نادرست ثبت شد."; break;
             }
-            header("Location: /leitner/review?message=" . urlencode($message));
+            $_SESSION['flash_message'] = $message;
         } else {
-            header("Location: /leitner/review?error=" . urlencode("خطا در پردازش مرور. لطفا دوباره تلاش کنید."));
+            $_SESSION['flash_error'] = "خطا در پردازش مرور برای کارت. ممکن است کارت متعلق به شما نباشد یا خطای دیگری رخ داده است.";
         }
+        header("Location: /leitner/review");
         exit;
-    }
-
-    public function showVocabularyList(): void {
-        $words = $this->wordModel->getAllByUser($this->currentUserId);
-        $message = $_GET['message'] ?? null;
-        $error = $_GET['error'] ?? null;
-        require_once __DIR__ . '/../Views/leitner/list_vocabulary.php';
-    }
-
-    public function showEditWordForm(): void {
-        $wordId = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-        if (!$wordId || $wordId === false) {
-            header("Location: /leitner/vocabulary?error=" . urlencode("شناسه کلمه نامعتبر است."));
-            exit;
-        }
-        $word = $this->wordModel->findById($wordId, $this->currentUserId);
-        if (!$word) {
-            header("Location: /leitner/vocabulary?error=" . urlencode("کلمه یافت نشد یا دسترسی شما مجاز نیست."));
-            exit;
-        }
-        $error = $_GET['error'] ?? null;
-        require_once __DIR__ . '/../Views/leitner/edit_word.php';
     }
 }

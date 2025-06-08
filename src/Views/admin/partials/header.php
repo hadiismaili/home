@@ -18,7 +18,8 @@ h2 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; mar
 <nav class="admin-nav"><ul>
 <li><a href="/admin/dashboard">داشبورد</a></li>
 <li><a href="/admin/users">مدیریت کاربران</a></li>
-<!-- Future links: <li><a href="/admin/words">مدیریت واژگان</a></li> -->
+<li><a href="/admin/global-words">بانک جهانی کلمات</a></li>
+<li><a href="/admin/learning-sets">مجموعه‌های آموزشی</a></li>
 <li><a href="/" target="_blank">مشاهده سایت</a></li>
 <li><a href="/logout">خروج (<?php echo htmlspecialchars($_SESSION['admin_username'] ?? $_SESSION['username'] ?? 'کاربر'); ?>)</a></li>
 </ul></nav>

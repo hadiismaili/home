@@ -1,15 +1,17 @@
 <?php
 require_once __DIR__ . '/../partials/header.php';
 // $currentCard, $error, $message are passed from LeitnerController
+// $currentCard now contains 'progress_id' as the ID for the user_leitner_progress record.
+// It also contains all fields from global_word_bank.
 ?>
 
 <h2>مرور کلمات</h2>
 
-<?php if (!empty($_GET['error'])): ?>
-    <p style="color:red; border: 1px solid red; padding: 10px; margin-bottom:15px; border-radius:4px;"><?php echo htmlspecialchars(urldecode($_GET['error'])); ?></p>
+<?php if (!empty($error)): /* flash_error from session is now used by controller */ ?>
+    <p style="color:red; border: 1px solid red; padding: 10px; margin-bottom:15px; border-radius:4px;"><?php echo htmlspecialchars($error); ?></p>
 <?php endif; ?>
-<?php if (!empty($_GET['message'])): ?>
-    <p style="color:green; border: 1px solid green; padding: 10px; margin-bottom:15px; border-radius:4px;"><?php echo htmlspecialchars(urldecode($_GET['message'])); ?></p>
+<?php if (!empty($message)): /* flash_message from session is now used by controller */ ?>
+    <p style="color:green; border: 1px solid green; padding: 10px; margin-bottom:15px; border-radius:4px;"><?php echo htmlspecialchars($message); ?></p>
 <?php endif; ?>
 
 <?php if (isset($currentCard) && !empty($currentCard)): ?>
@@ -20,8 +22,11 @@ require_once __DIR__ . '/../partials/header.php';
         <?php if (!empty($currentCard['persian_phonetic_pronunciation'])): ?>
             <p style="font-size: 1.2em; color: #555; margin-bottom: 8px;">(تلفظ: <?php echo htmlspecialchars($currentCard['persian_phonetic_pronunciation']); ?>)</p>
         <?php endif; ?>
-        <?php if (!empty($currentCard['word_type_and_gender'])): ?>
-            <p style="font-size: 1.1em; color: #777; margin-bottom: 8px;">نوع: <?php echo htmlspecialchars($currentCard['word_type_and_gender']); ?></p>
+        <?php if (!empty($currentCard['word_type_and_gender'])): // This was word_type in global_word_bank, need to check if controller passes it as this key
+            // Assuming controller's getDueCardsForSet selects word_type and word_gender separately if needed.
+            // For now, if the key exists from the SELECT gwb.*
+            ?>
+            <p style="font-size: 1.1em; color: #777; margin-bottom: 8px;">نوع/جنسیت: <?php echo htmlspecialchars($currentCard['word_type'] ?? ''); ?> <?php echo htmlspecialchars($currentCard['word_gender'] ?? ''); ?></p>
         <?php endif; ?>
         <?php if (!empty($currentCard['word_level'])): ?>
             <p style="font-size: 1.1em; color: #777; margin-bottom: 25px;">سطح: <?php echo htmlspecialchars($currentCard['word_level']); ?></p>
@@ -54,11 +59,11 @@ require_once __DIR__ . '/../partials/header.php';
         </div>
 
         <form action="/leitner/review/process" method="POST" id="reviewOutcomeForm" style="display:none; margin-top: 30px; padding-top:20px; border-top:1px solid #eee;">
-            <input type="hidden" name="card_id" value="<?php echo htmlspecialchars($currentCard['id']); ?>">
+            <input type="hidden" name="card_id" value="<?php echo htmlspecialchars($currentCard['progress_id']); ?>"> {/* Value is progress_id */}
             <p style="font-weight:bold; margin-bottom:15px;">نتیجه مرور شما چطور بود؟</p>
-            <button type="submit" name="outcome" value="<?php echo App\Models\LeitnerCard::OUTCOME_CORRECT; ?>" class="button" style="background-color: #5cb85c; margin: 5px; padding: 10px 15px; font-size: 1em;">می دانم</button>
-            <button type="submit" name="outcome" value="<?php echo App\Models\LeitnerCard::OUTCOME_PARTIAL; ?>" class="button" style="background-color: #f0ad4e; margin: 5px; padding: 10px 15px; font-size: 1em;">نسبتا میفهمم</button>
-            <button type="submit" name="outcome" value="<?php echo App\Models\LeitnerCard::OUTCOME_INCORRECT; ?>" class="button" style="background-color: #d9534f; margin: 5px; padding: 10px 15px; font-size: 1em;">نمی دانم</button>
+            <button type="submit" name="outcome" value="<?php echo App\Models\UserProgressService::OUTCOME_CORRECT; ?>" class="button" style="background-color: #5cb85c; margin: 5px; padding: 10px 15px; font-size: 1em;">می دانم</button>
+            <button type="submit" name="outcome" value="<?php echo App\Models\UserProgressService::OUTCOME_PARTIAL; ?>" class="button" style="background-color: #f0ad4e; margin: 5px; padding: 10px 15px; font-size: 1em;">نسبتا میفهمم</button>
+            <button type="submit" name="outcome" value="<?php echo App\Models\UserProgressService::OUTCOME_INCORRECT; ?>" class="button" style="background-color: #d9534f; margin: 5px; padding: 10px 15px; font-size: 1em;">نمی دانم</button>
         </form>
     </div>
 

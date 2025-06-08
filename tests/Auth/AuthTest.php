@@ -4,6 +4,7 @@ namespace Tests\Auth;
 
 use PHPUnit\Framework\TestCase;
 use App\Models\User;
+use App\Models\LearningSet;
 use App\Core\Database;
 use PDO;
 
@@ -11,6 +12,7 @@ class AuthTest extends TestCase
 {
     private ?PDO $pdo = null;
     private User $userModel;
+    private LearningSet $learningSetModel;
 
     protected function setUp(): void
     {
@@ -20,18 +22,24 @@ class AuthTest extends TestCase
         $this->pdo = $db->getConnection();
 
         if ($this->pdo) {
-            $this->pdo->exec("DELETE FROM users"); // Clear users for each test
-            $this->pdo->exec("DELETE FROM words"); // Clear related data that might be affected by user tests (cascade)
-            $this->pdo->exec("DELETE FROM leitner_cards"); // Clear related data
+            $this->pdo->exec("DELETE FROM user_leitner_progress");
+            $this->pdo->exec("DELETE FROM learning_set_words");
+            $this->pdo->exec("DELETE FROM global_word_bank");
+            $this->pdo->exec("DELETE FROM users");
+            $this->pdo->exec("DELETE FROM learning_sets");
         } else {
             $this->fail("Failed to get PDO connection in setUp.");
         }
 
         $this->userModel = new User();
+        $this->learningSetModel = new LearningSet();
 
         if (session_status() == PHP_SESSION_ACTIVE) {
              session_unset();
              session_destroy();
+        }
+        if (session_status() == PHP_SESSION_NONE && !headers_sent()) {
+            @session_start();
         }
         $_SESSION = [];
     }
@@ -92,10 +100,10 @@ class AuthTest extends TestCase
     public function testGetAllUsers()
     {
         $this->userModel->create('user1', 'u1@example.com', 'p1');
-        $this->userModel->create('user2', 'u2@example.com', 'p2', true); // Admin user
+        $this->userModel->create('user2', 'u2@example.com', 'p2', true);
         $this->userModel->create('user3', 'u3@example.com', 'p3');
 
-        $users = $this->userModel->getAllUsers('username', 'ASC'); // Test ordering
+        $users = $this->userModel->getAllUsers('username', 'ASC');
         $this->assertCount(3, $users);
         $this->assertEquals('user1', $users[0]['username']);
         $this->assertEquals('user2', $users[1]['username']);
@@ -134,37 +142,63 @@ class AuthTest extends TestCase
         $this->assertNotNull($user, "Test setup: User 'todelete' not found after creation.");
         $userId = $user['id'];
 
-        $wordModel = new \App\Models\Word();
-        $cardModel = new \App\Models\LeitnerCard();
-
-        $wordId1 = $wordModel->create($userId, 'Wort1Del', 'Word1Del');
-        $this->assertNotFalse($wordId1, "Failed to create word1 for cascade delete test.");
-        if ($wordId1) $cardModel->create($wordId1, $userId); // Only create card if word was created
-
-        $wordId2 = $wordModel->create($userId, 'Wort2Del', 'Word2Del');
-        $this->assertNotFalse($wordId2, "Failed to create word2 for cascade delete test.");
-        if ($wordId2) $cardModel->create($wordId2, $userId); // Only create card if word was created
-
-        if ($wordId1) $this->assertNotNull($wordModel->findById($wordId1, $userId), "Word1 should exist before user deletion.");
-        if ($wordId1) $this->assertNotNull($cardModel->findByWordId($wordId1, $userId), "Card for Word1 should exist before user deletion.");
-
         $result = $this->userModel->deleteById($userId);
         $this->assertTrue($result, "deleteById should return true for successful deletion.");
         $this->assertNull($this->userModel->findById($userId), 'User should be deleted.');
-
-        if ($wordId1) $this->assertNull($wordModel->findById($wordId1, $userId), 'Word1 should be deleted by cascade.');
-        if ($wordId1) $this->assertNull($cardModel->findByWordId($wordId1, $userId), 'Card for Word1 should be deleted by cascade.');
-        if ($wordId2) $this->assertNull($wordModel->findById($wordId2, $userId), 'Word2 should be deleted by cascade.');
-        if ($wordId2) $this->assertNull($cardModel->findByWordId($wordId2, $userId), 'Card for Word2 should be deleted by cascade.');
     }
 
     public function testCountAllUsers()
     {
         $initialCount = $this->userModel->countAll();
+        $this->assertEquals(0, $initialCount, "Initial user count should be 0 after setUp.");
 
         $this->userModel->create('usercount1', 'uc1@example.com', 'p');
         $this->userModel->create('usercount2', 'uc2@example.com', 'p');
-        $this->assertEquals($initialCount + 2, $this->userModel->countAll());
+        $this->assertEquals(2, $this->userModel->countAll());
+    }
+
+    public function testSetAndGetActiveLearningSetId()
+    {
+        $createUserResult = $this->userModel->create('setuser', 'setuser@example.com', 'pass');
+        $this->assertTrue($createUserResult, "Failed to create user for active set test.");
+        $user = $this->userModel->findByUsername('setuser');
+        $this->assertNotNull($user, "Failed to find user 'setuser'.");
+        $userId = $user['id'];
+
+        $adminForSetCreate = $this->userModel->create('adminforset', 'adminforset@example.com', 'pass', true);
+        $this->assertTrue($adminForSetCreate);
+        $adminUser = $this->userModel->findByUsername('adminforset');
+        $this->assertNotNull($adminUser);
+        $adminId = $adminUser['id'];
+
+        $mockSetId = $this->learningSetModel->create('Dummy Set 1', null, $adminId);
+        $this->assertNotFalse($mockSetId, "Failed to create dummy learning set 1.");
+        $mockSetId2 = $this->learningSetModel->create('Dummy Set 2', null, $adminId);
+        $this->assertNotFalse($mockSetId2, "Failed to create dummy learning set 2.");
+
+        $this->assertNull($this->userModel->getActiveLearningSetId($userId), 'Active set ID should be null initially.');
+
+        $result = $this->userModel->setActiveLearningSet($userId, $mockSetId);
+        $this->assertTrue($result, 'setActiveLearningSet should return true when changing value from null to an ID.');
+        $this->assertEquals($mockSetId, $this->userModel->getActiveLearningSetId($userId), 'Active set ID should be updated.');
+
+        $result = $this->userModel->setActiveLearningSet($userId, $mockSetId2);
+        $this->assertTrue($result, 'setActiveLearningSet should return true when changing to another ID.');
+        $this->assertEquals($mockSetId2, $this->userModel->getActiveLearningSetId($userId), 'Active set ID should now be updated to the second mock ID.');
+
+        $result = $this->userModel->setActiveLearningSet($userId, null);
+        $this->assertTrue($result, "setActiveLearningSet should return true when setting to null.");
+        $this->assertNull($this->userModel->getActiveLearningSetId($userId), "Active set ID should be null after unsetting.");
+
+        // Test setting to the same value (null again) - focus on state not rowCount
+        $this->userModel->setActiveLearningSet($userId, null);
+        $this->assertNull($this->userModel->getActiveLearningSetId($userId), 'Active set ID should remain null if set to null again.');
+
+        // Test setting to the same non-null value - focus on state not rowCount
+        $this->userModel->setActiveLearningSet($userId, $mockSetId);
+        $this->assertEquals($mockSetId, $this->userModel->getActiveLearningSetId($userId), 'Active set ID should be set to mockSetId.');
+        $this->userModel->setActiveLearningSet($userId, $mockSetId);
+        $this->assertEquals($mockSetId, $this->userModel->getActiveLearningSetId($userId), 'Active set ID should remain mockSetId if set to the same ID again.');
     }
 
     protected function tearDown(): void

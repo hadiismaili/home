@@ -17,9 +17,6 @@ class Database {
         } else {
             $this->dbPath = __DIR__ . '/../../database/app.db';
         }
-        // Crucially, do not call resetInstance() here in testing mode,
-        // as each new Model would get a fresh DB, breaking tests.
-        // resetInstance() should be called in test setUp().
     }
 
     public function getConnection(): PDO {
@@ -33,34 +30,64 @@ class Database {
                 self::$instance = $this->pdo;
                 $this->initDatabase();
             } catch (PDOException $e) {
-                // Consider logging this error instead of dying in a real application
                 die("Database connection failed: " . $e->getMessage());
             }
         } else {
             $this->pdo = self::$instance;
+            if ($this->pdo) $this->pdo->exec('PRAGMA foreign_keys = ON;'); // Ensure for existing connections
         }
         return self::$instance;
     }
 
     private function initDatabase(): void {
         if ($this->pdo === null) {
-            // This path should ideally not be hit if getConnection is always used prior.
-            // Re-establish connection for robustness if pdo is null but static instance exists or needs creating.
             if (self::$instance) {
                 $this->pdo = self::$instance;
-            } else { // Should not happen if called from getConnection after successful connection
+            } else {
                 try {
                     $this->pdo = new PDO('sqlite:' . $this->dbPath);
                     $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
                     $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-                    $this->pdo->exec('PRAGMA foreign_keys = ON;');
                     self::$instance = $this->pdo;
                 } catch (PDOException $e) {
-                    die("Database connection failed within initDatabase fallback: " . $e->getMessage());
+                    die("Database connection failed critically in initDatabase fallback: " . $e->getMessage());
                 }
             }
         }
+        $this->pdo->exec('PRAGMA foreign_keys = ON;');
 
+        // Drop old tables first, in order that respects FKs if they were linked differently before
+        // (e.g., if leitner_cards had an FK to words that wasn't CASCADE)
+        $this->pdo->exec("DROP TABLE IF EXISTS leitner_cards"); // Old table
+        $this->pdo->exec("DROP TABLE IF EXISTS words");       // Old table
+
+        // New tables will be created after this. User table is modified.
+
+        // --- learning_sets Table (Create before users references it, if not using ALTER) ---
+        // However, users table is created with IF NOT EXISTS, so it's fine.
+        // The ALTER TABLE approach is for existing databases.
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS learning_sets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(255) NOT NULL UNIQUE,
+                description TEXT NULL,
+                admin_id INTEGER NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL
+            )
+        ");
+        $this->pdo->exec("
+            CREATE TRIGGER IF NOT EXISTS update_learning_sets_updated_at
+            AFTER UPDATE ON learning_sets
+            FOR EACH ROW
+            BEGIN
+                UPDATE learning_sets SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+            END;
+        ");
+
+        // --- users Table (Add active_learning_set_id) ---
+        // Create table if it doesn't exist, including the new FK
         $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,58 +95,92 @@ class Database {
                 email VARCHAR(255) NOT NULL UNIQUE,
                 password_hash VARCHAR(255) NOT NULL,
                 is_admin BOOLEAN DEFAULT 0 NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                active_learning_set_id INTEGER NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (active_learning_set_id) REFERENCES learning_sets(id) ON DELETE SET NULL
             )
         ");
+        // Attempt to add column if table already existed without it
+        $stmt = $this->pdo->query("PRAGMA table_info(users)");
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('active_learning_set_id', $columns)) {
+            try {
+                // Note: Default FK definition might be complex with ALTER TABLE in older SQLite.
+                // Simpler to add column then add FK if needed, but direct add with FK reference is cleaner if supported.
+                $this->pdo->exec("ALTER TABLE users ADD COLUMN active_learning_set_id INTEGER NULL REFERENCES learning_sets(id) ON DELETE SET NULL");
+            } catch (PDOException $e) {
+                // error_log("Notice: Could not add active_learning_set_id to users, might exist or other issue: " . $e->getMessage());
+            }
+        }
 
-        // Updated 'words' table schema
+
+        // --- global_word_bank Table ---
         $this->pdo->exec("
-            CREATE TABLE IF NOT EXISTS words (
+            CREATE TABLE IF NOT EXISTS global_word_bank (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                german_word VARCHAR(255) NOT NULL,
-                translation VARCHAR(255) NOT NULL,
+                german_word TEXT NOT NULL UNIQUE,
+                translation TEXT NOT NULL,
                 persian_phonetic_pronunciation TEXT NULL,
-                word_type_and_gender TEXT NULL,
+                word_type TEXT NULL,
+                word_gender TEXT NULL,
                 word_level TEXT NULL,
                 example_german TEXT NULL,
                 example_persian_translation TEXT NULL,
                 audio_url TEXT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ");
+        $this->pdo->exec("
+            CREATE TRIGGER IF NOT EXISTS update_global_word_bank_updated_at
+            AFTER UPDATE ON global_word_bank
+            FOR EACH ROW
+            BEGIN
+                UPDATE global_word_bank SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+            END;
+        ");
+
+        // --- learning_set_words (Junction Table) ---
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS learning_set_words (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                learning_set_id INTEGER NOT NULL,
+                global_word_id INTEGER NOT NULL,
+                FOREIGN KEY (learning_set_id) REFERENCES learning_sets(id) ON DELETE CASCADE,
+                FOREIGN KEY (global_word_id) REFERENCES global_word_bank(id) ON DELETE CASCADE,
+                UNIQUE (learning_set_id, global_word_id)
             )
         ");
 
-        // Attempt to drop old audio_filename column
-        // This only works in SQLite 3.35.0+
-        // We need to check if the column exists before trying to drop it.
-        $stmt = $this->pdo->query("PRAGMA table_info(words)");
-        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN, 1); // Get column names
-        if (in_array('audio_filename', $columns)) {
-            try {
-                $this->pdo->exec("ALTER TABLE words DROP COLUMN audio_filename");
-            } catch (PDOException $e) {
-                // Log or handle error if drop fails for other reasons than "not supported"
-                // For now, we proceed, as the new code won't use it.
-                // error_log("Note: Could not drop audio_filename column (may not be supported, or other issue): " . $e->getMessage());
-            }
-        }
-
+        // --- user_leitner_progress Table ---
         $this->pdo->exec("
-            CREATE TABLE IF NOT EXISTS leitner_cards (
+            CREATE TABLE IF NOT EXISTS user_leitner_progress (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                word_id INTEGER NOT NULL UNIQUE,
                 user_id INTEGER NOT NULL,
-                box_number INTEGER NOT NULL DEFAULT 0, -- Default to Box 0
+                global_word_id INTEGER NOT NULL,
+                learning_set_id INTEGER NOT NULL,
+                box_number INTEGER NOT NULL DEFAULT 0,
                 last_reviewed_at TIMESTAMP NULL,
                 next_review_at TIMESTAMP NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (word_id) REFERENCES words(id) ON DELETE CASCADE,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (global_word_id) REFERENCES global_word_bank(id) ON DELETE CASCADE,
+                FOREIGN KEY (learning_set_id) REFERENCES learning_sets(id) ON DELETE CASCADE,
+                UNIQUE (user_id, global_word_id, learning_set_id)
             )
         ");
-        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_leitner_cards_user_box ON leitner_cards (user_id, box_number)");
-        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_leitner_cards_user_next_review ON leitner_cards (user_id, next_review_at)");
+        $this->pdo->exec("
+            CREATE TRIGGER IF NOT EXISTS update_user_leitner_progress_updated_at
+            AFTER UPDATE ON user_leitner_progress
+            FOR EACH ROW
+            BEGIN
+                UPDATE user_leitner_progress SET updated_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
+            END;
+        ");
+
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_ulp_user_set_next_review ON user_leitner_progress (user_id, learning_set_id, next_review_at)");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_ulp_user_set_box ON user_leitner_progress (user_id, learning_set_id, box_number)");
     }
 
     public static function resetInstance(): void {
