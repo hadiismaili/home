@@ -57,7 +57,7 @@ class LeitnerCard {
     }
 
     public function findByWordId(int $wordId, int $userId): ?array {
-        $stmt = $this->db->prepare("SELECT lc.*, w.german_word, w.translation, w.audio_filename
+        $stmt = $this->db->prepare("SELECT lc.*, w.german_word, w.translation, w.audio_url
                                     FROM leitner_cards lc
                                     JOIN words w ON lc.word_id = w.id
                                     WHERE lc.word_id = :word_id AND lc.user_id = :user_id");
@@ -79,7 +79,7 @@ class LeitnerCard {
 
     public function getDueCards(int $userId, int $limit = 10): array {
         $now = (new DateTime())->format('Y-m-d H:i:s');
-        $sql = "SELECT lc.*, w.german_word, w.translation, w.audio_filename
+        $sql = "SELECT lc.*, w.german_word, w.translation, w.audio_url
                 FROM leitner_cards lc
                 JOIN words w ON lc.word_id = w.id
                 WHERE lc.user_id = :user_id AND lc.next_review_at <= :now AND lc.box_number <= :max_box_number
@@ -121,9 +121,9 @@ class LeitnerCard {
 
     public function processReview(int $cardId, int $userId, string $outcome): bool {
         $card = $this->getCardById($cardId, $userId);
-        if (!$card) return false; // Corrected variable name
+        if (!$card) return false;
 
-        $currentBox = (int)$card['box_number']; // Corrected variable name
+        $currentBox = (int)$card['box_number'];
         $newBox = $currentBox;
 
         if ($currentBox === 0) {
@@ -185,8 +185,6 @@ class LeitnerCard {
             return (clone $baseDate)->modify('+100 years');
         }
         if (!isset(self::BOX_INTERVALS[$boxNumber])) {
-            // Fallback: if boxNumber is valid (e.g. 1-11) but somehow not in BOX_INTERVALS array
-            // or if it's an invalid positive number, default to Box 1 interval.
             $daysToAdd = self::BOX_INTERVALS[1];
             return (clone $baseDate)->modify("+$daysToAdd days");
         }
