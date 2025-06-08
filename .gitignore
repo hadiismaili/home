@@ -1,0 +1,25 @@
+# Composer
+vendor/
+composer.lock
+
+# PHPUnit cache
+.phpunit.result.cache
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Database files (if not using :memory: for main dev)
+# database/app.db
+# database/app_test.db
+
+# Audio uploads (if they are not meant to be in repo)
+# public/audio/
