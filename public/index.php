@@ -69,7 +69,7 @@ switch ($route) {
         $leitnerController = new \App\Controllers\LeitnerController();
         $leitnerController->showDashboard();
         break;
-    case '/leitner/activate-set': // POST only
+    case '/leitner/activate-set':
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $leitnerController = new \App\Controllers\LeitnerController();
             $leitnerController->activateLearningSet();
@@ -79,11 +79,6 @@ switch ($route) {
             exit;
         }
         break;
-    // Old Leitner word management routes are removed as per controller changes.
-    // case '/leitner/add': ...
-    // case '/leitner/vocabulary': ...
-    // case '/leitner/edit': ...
-    // case '/leitner/delete': ...
     case '/leitner/review':
         $leitnerController = new \App\Controllers\LeitnerController();
         $leitnerController->showReview();
@@ -93,7 +88,7 @@ switch ($route) {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $leitnerController->processReviewOutcome();
         } else {
-            $_SESSION['flash_error'] = "متد دسترسی نامعتبر برای پردازش مرور."; // Changed from $_SESSION['error']
+            $_SESSION['flash_error'] = "متد دسترسی نامعتبر برای پردازش مرور.";
             header("Location: /leitner/review");
             exit;
         }
@@ -152,6 +147,16 @@ switch ($route) {
             $globalWordController->deleteWord();
         } else {
             $_SESSION['flash_error'] = "متد نامعتبر برای حذف کلمه از بانک جهانی.";
+            header("Location: /admin/global-words");
+            exit;
+        }
+        break;
+    case '/admin/global-words/import': // POST only
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $globalWordController = new \App\Controllers\Admin\GlobalWordController();
+            $globalWordController->importCsv();
+        } else {
+            $_SESSION['flash_error'] = "متد نامعتبر برای بارگذاری CSV.";
             header("Location: /admin/global-words");
             exit;
         }
