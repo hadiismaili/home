@@ -5,7 +5,67 @@ require_once __DIR__ . '/../partials/header.php';
 // It also contains all fields from global_word_bank.
 ?>
 
+<?php
+// --- BiDi helpers for splitting sentences and rendering with proper direction ---
+if (!function_exists('split_sentences')) {
+    function split_sentences(string $text): array {
+        $text = trim(str_replace(["\r\n", "\r"], "\n", $text));
+        if ($text === '') {
+            return [];
+        }
+
+        $lines = preg_split('/\n+/', $text);
+        $sentences = [];
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $parts = preg_split('/(?<=[\.!\?\؟:؛])\s+/', $line, -1, PREG_SPLIT_NO_EMPTY);
+            foreach ($parts as $part) {
+                $part = trim($part);
+                if ($part !== '') {
+                    $sentences[] = $part;
+                }
+            }
+        }
+        return $sentences;
+    }
+}
+
+if (!function_exists('detect_dir')) {
+    function detect_dir(string $text): string {
+        $hasRtlChars = preg_match('/[\x{0600}-\x{06FF}\x{0750}-\x{077F}\x{08A0}-\x{08FF}\x{FB50}-\x{FDFF}\x{FE70}-\x{FEFF}]/u', $text);
+        return $hasRtlChars ? 'rtl' : 'ltr';
+    }
+}
+
+if (!function_exists('render_bidi_lines')) {
+    function render_bidi_lines(string $text): string {
+        $sentences = split_sentences($text);
+        $html = '';
+        foreach ($sentences as $s) {
+            if ($s === '') {
+                continue;
+            }
+            $dir = detect_dir($s);
+            $class = $dir === 'rtl' ? 'rtl' : 'ltr';
+            $escaped = htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $html .= '<div class="sentence ' . $class . '" dir="' . $dir . '">' . $escaped . '</div>';
+        }
+        return $html;
+    }
+}
+?>
+
 <h2>مرور کلمات</h2>
+
+<style>
+.bidi-block { display: block; }
+.sentence { margin: 6px 0; line-height: 1.8; }
+.sentence.rtl { direction: rtl; text-align: right; }
+.sentence.ltr { direction: ltr; text-align: left; }
+</style>
 
 <?php if (!empty($error)): /* flash_error from session is now used by controller */ ?>
     <p style="color:red; border: 1px solid red; padding: 10px; margin-bottom:15px; border-radius:4px;"><?php echo htmlspecialchars($error); ?></p>
@@ -36,7 +96,9 @@ require_once __DIR__ . '/../partials/header.php';
 
         <div id="translationContainer" style="display:none; margin-top: 20px; border-top: 1px solid #eee; padding-top:20px;">
             <h4 style="font-size:1.4em; color:#333;">ترجمه فارسی:</h4>
-            <p class="translation" style="font-size: 2em; color: #27ae60; margin-bottom:20px;"><?php echo htmlspecialchars($currentCard['translation']); ?></p>
+            <div class="translation bidi-block" style="font-size: 2em; color: #27ae60; margin-bottom:20px;">
+                <?php echo render_bidi_lines($currentCard['translation'] ?? ''); ?>
+            </div>
 
             <?php if (!empty($currentCard['example_german'])): ?>
                 <div style="margin-top:20px; padding:15px; background-color:#f0f8ff; border-radius:4px; border: 1px solid #e0e0e0;">
